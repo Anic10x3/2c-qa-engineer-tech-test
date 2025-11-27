@@ -1,0 +1,90 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - feat/*
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: Checkout the repository
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    # Step 2: Set up Node.js
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    # Step 3: Install dependencies
+    - name: Install Dependencies
+      run: npm install
+
+    # Step 4: Lint the code
+    - name: Run Linter
+      run: npm run lint
+
+    # Step 5: Build the project
+    - name: Build Project
+      run: npm run build
+
+    # Step 6: Run Unit Tests
+    - name: Run Unit Tests
+      run: npm run test
+
+    # Step 7: Run E2E Tests with Playwright
+    - name: Run E2E Tests
+      run: npm run test:e2e
+
+    # Step 8: Publish Test Report to GitHub
+    - name: Publish Test Report to GitHub
+      if: always()
+      uses: dorny/test-reporter@v1
+      with:
+        name: Playwright E2E Results
+        path: allure-results/*.xml
+        reporter: allure
+
+    # Step 9: Generate Test Summary
+    - name: Generate Test Summary
+      if: always()
+      id: summary
+      run: |
+        PASSED=$(grep -oP '(?<=Tests run: )[0-9]+' allure-results/*.txt | awk '{sum+=$1} END {print sum}')
+        FAILED=$(grep -oP '(?<=Failures: )[0-9]+' allure-results/*.txt | awk '{sum+=$1} END {print sum}')
+        SKIPPED=$(grep -oP '(?<=Skipped: )[0-9]+' allure-results/*.txt | awk '{sum+=$1} END {print sum}')
+        echo "PASSED=$PASSED" >> $GITHUB_ENV
+        echo "FAILED=$FAILED" >> $GITHUB_ENV
+        echo "SKIPPED=$SKIPPED" >> $GITHUB_ENV
+
+    # Step 10: Extract Failed Test Names
+    - name: Extract Failed Test Names
+      if: always()
+      run: |
+        FAILED_TESTS=$(grep -oP '(?<=--- ).*(?= ---)' allure-results/*.txt | tr '\n' ',' | sed 's/,$//')
+        echo "FAILED_TESTS=$FAILED_TESTS" >> $GITHUB_ENV
+
+    # Step 11: Send Slack Notification
+    - name: Send Slack Notification
+      if: always()
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        STATUS="✅ All tests passed!"
+        if [ "$FAILED" -gt 0 ]; then
+          STATUS="❌ Some tests failed"
+        fi
+        curl -X POST -H 'Content-type: application/json' \
+        --data "{
+          \"text\": \"*Test Summary* (Node.js 18)\n$STATUS\n✅ Passed: $PASSED\n❌ Failed: $FAILED\n⚠️ Skipped: $SKIPPED\n*Failed Tests:* ${FAILED_TESTS}\nRun: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>\"
+        }" \
+        $SLACK_WEBHOOK_URL
