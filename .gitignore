@@ -41,3 +41,4 @@ next-env.d.ts
 allure-results/
 allure-report/
 .vscode/
+.gu
